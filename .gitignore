@@ -1,0 +1,19 @@
+# Environment variables (SECRETS)
+.env
+
+# Python Virtual Environment
+venv/
+__pycache__/
+*.pyc
+
+# Local SQLite Database
+*.db
+issues.db
+
+# IDE & OS settings
+.vscode/
+.idea/
+.DS_Store
+
+# THEORY
+what we do.txt
