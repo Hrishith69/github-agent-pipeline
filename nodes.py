@@ -4,10 +4,19 @@ from langchain_core.messages import HumanMessage
 from state import AgentState
 from retriever import get_relevant_docs
 
+def extract_text(content) -> str:
+    """Handles newer Gemini models that return content as a list of blocks."""
+    if isinstance(content, list):
+        return " ".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    return str(content)
+
 # Initialize Gemini LLM using Flash model for speed & cost efficiency
 api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash", 
+    model="gemini-3.6-flash", 
     temperature=0,
     google_api_key=api_key
 )
@@ -29,7 +38,7 @@ def classify_node(state: AgentState) -> dict:
     Respond ONLY with the category name.
     """
     response = llm.invoke([HumanMessage(content=prompt)])
-    category = response.content.strip()
+    category = extract_text(response.content).strip()
     print(f"🏷️ [Classify] Category: {category}")
     return {"category": category}
 
@@ -59,7 +68,7 @@ def draft_node(state: AgentState) -> dict:
     Write a helpful, professional markdown response.
     """
     response = llm.invoke([HumanMessage(content=prompt)])
-    draft = response.content.strip()
+    draft = extract_text(response.content).strip()
     print("📝 [Draft] Response created.")
     return {"draft_response": draft}
 
