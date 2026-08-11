@@ -1,8 +1,9 @@
 import os
 import sqlite3
+import requests
 from github import Github
 from dotenv import load_dotenv
-from agent import app  # Imports our compiled LangGraph agent graph
+from agent import app  # Imports compiled LangGraph core agent
 
 # Force load environment variables
 load_dotenv(override=True)
@@ -10,6 +11,7 @@ load_dotenv(override=True)
 DB_PATH = "issues.db"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO")
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 
 
 def fetch_pending_issues() -> list[dict]:
@@ -29,7 +31,7 @@ def fetch_pending_issues() -> list[dict]:
 
 
 def update_issue_status(issue_number: int, new_status: str):
-    """Updates the issue status in SQLite (e.g., RESOLVED, REJECTED)."""
+    """Updates issue status in SQLite (e.g., RESOLVED, REJECTED)."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -52,6 +54,31 @@ def post_github_comment(issue_number: int, comment_body: str) -> bool:
     except Exception as e:
         print(f"❌ Failed to post to GitHub: {e}")
         return False
+
+
+def send_slack_alert(issue_number: int, title: str, category: str, confidence: float, draft: str):
+    """Sends a formatted notification message to Slack via Webhook."""
+    if not SLACK_WEBHOOK_URL:
+        print("⚠️ SLACK_WEBHOOK_URL not found in .env. Skipping Slack alert.")
+        return
+
+    message_text = f"""🔔 *New GitHub Issue Drafted for Review*
+*Issue #{issue_number}:* {title}
+*Category:* `{category}` | *Confidence Score:* `{confidence}`
+
+*Draft Response:*
+```
+{draft}
+```"""
+    
+    payload = {"text": message_text}
+    
+    try:
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload)
+        response.raise_for_status()
+        print(f"✅ Slack alert sent for Issue #{issue_number}")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to send Slack alert: {e}")
 
 
 def run_pipeline():
@@ -87,6 +114,9 @@ def run_pipeline():
         print("\n📝 Draft Response Preview:\n" + "-" * 40)
         print(draft)
         print("-" * 40)
+        
+        # Send Slack Alert before prompting user
+        send_slack_alert(issue_num, issue["title"], category, confidence, draft)
 
         # 3. Decision Prompt
         user_choice = (
