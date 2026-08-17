@@ -3,6 +3,14 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from state import AgentState
 from retriever import get_relevant_docs
+from retries import api_retry
+from logger import logger
+
+# Wrap Gemini LLM calls with automated retries
+@api_retry
+def call_llm_with_retry(llm, messages):
+    """Invokes the LLM with automatic 3x retry on network/rate-limit failure."""
+    return llm.invoke(messages)
 
 def extract_text(content) -> str:
     """Handles newer Gemini models that return content as a list of blocks."""
@@ -13,7 +21,7 @@ def extract_text(content) -> str:
         )
     return str(content)
 
-# Initialize Gemini LLM using Flash model for speed & cost efficiency
+# Initialize Gemini LLM
 api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 llm = ChatGoogleGenerativeAI(
     model="gemini-3.6-flash", 
@@ -37,9 +45,10 @@ def classify_node(state: AgentState) -> dict:
 
     Respond ONLY with the category name.
     """
-    response = llm.invoke([HumanMessage(content=prompt)])
+    # Uses retry-protected wrapper
+    response = call_llm_with_retry(llm, [HumanMessage(content=prompt)])
     category = extract_text(response.content).strip()
-    print(f"🏷️ [Classify] Category: {category}")
+    logger.info(f"🏷️ [Classify] Category: {category}")
     return {"category": category}
 
 # --- WORKER 2: RETRIEVE NODE ---
@@ -47,7 +56,7 @@ def retrieve_node(state: AgentState) -> dict:
     """Fetches relevant FastAPI documentation chunks from ChromaDB."""
     query = f"{state['title']} {state['body']}"
     docs = get_relevant_docs(query)
-    print(f"📚 [Retrieve] Found {len(docs)} context chunks.")
+    logger.info(f"📚 [Retrieve] Found {len(docs)} context chunks.")
     return {"retrieved_docs": docs}
 
 # --- WORKER 3: DRAFT NODE ---
@@ -67,9 +76,10 @@ def draft_node(state: AgentState) -> dict:
 
     Write a helpful, professional markdown response.
     """
-    response = llm.invoke([HumanMessage(content=prompt)])
+    # Uses retry-protected wrapper
+    response = call_llm_with_retry(llm, [HumanMessage(content=prompt)])
     draft = extract_text(response.content).strip()
-    print("📝 [Draft] Response created.")
+    logger.info("📝 [Draft] Response created.")
     return {"draft_response": draft}
 
 # --- WORKER 4: CONFIDENCE CHECK NODE ---
@@ -78,7 +88,6 @@ def confidence_check_node(state: AgentState) -> dict:
     draft = state.get("draft_response", "")
     docs = state.get("retrieved_docs", [])
     
-    # Simple rule-based confidence evaluation
     if len(docs) > 0 and len(draft) > 50:
         score = 0.95
         status = "DRAFTED"
@@ -86,5 +95,5 @@ def confidence_check_node(state: AgentState) -> dict:
         score = 0.40
         status = "NEEDS_HUMAN_REVIEW"
         
-    print(f"📊 [Confidence] Score: {score} | Status: {status}")
+    logger.info(f"📊 [Confidence] Score: {score} | Status: {status}")
     return {"confidence_score": score, "status": status}
